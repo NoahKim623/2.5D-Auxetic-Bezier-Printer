@@ -35,6 +35,37 @@ from PyQt5.QtWidgets import (
 import pyvista as pv
 from pyvistaqt import QtInteractor
 
+# VTK's trackball-camera style is what we subclass to remap the right button.
+try:
+    from vtkmodules.vtkInteractionStyle import (
+        vtkInteractorStyleTrackballCamera as _TrackballCamera,
+    )
+except Exception:  # older vtk packaging
+    from vtk import vtkInteractorStyleTrackballCamera as _TrackballCamera
+
+
+class _RotatePanZoomStyle(_TrackballCamera):
+    """Camera controls: left-drag rotates, right-drag moves, scroll zooms.
+
+    Subclasses VTK's trackball-camera style and remaps only the right mouse
+    button from its default dolly (zoom) to a pan. We do this with observer
+    callbacks rather than by overriding OnRightButtonDown/Up, because VTK does
+    not reliably dispatch overridden virtual methods to a Python subclass,
+    whereas observer callbacks always fire. Registering an observer for these
+    button events also suppresses the built-in handler, so the default zoom no
+    longer runs. Left-drag (rotate) and the scroll wheel (zoom) are untouched.
+    """
+
+    def __init__(self):
+        self.AddObserver("RightButtonPressEvent", self._on_right_press)
+        self.AddObserver("RightButtonReleaseEvent", self._on_right_release)
+
+    def _on_right_press(self, obj, event):
+        self.StartPan()
+
+    def _on_right_release(self, obj, event):
+        self.EndPan()
+
 
 # ---------------------------------------------------------------------------
 # Geometry: find where separate 2.5D pieces meet at a single point,
@@ -258,6 +289,17 @@ class MeshViewer(QFrame):
 
         self.plotter = QtInteractor(self)
         self.plotter.set_background("white")
+        # Controls: left-drag rotates, right-drag moves (pans), scroll zooms.
+        self._style = _RotatePanZoomStyle()
+        try:
+            self.plotter.iren.interactor.SetInteractorStyle(self._style)
+        except Exception:
+            # Fallback for other pyvista/pyvistaqt versions.
+            self.plotter.interactor.GetRenderWindow().GetInteractor() \
+                .SetInteractorStyle(self._style)
+        self.plotter.interactor.setToolTip(
+            "Left-drag: rotate   •   Right-drag: move   •   Scroll: zoom"
+        )
         layout.addWidget(self.plotter.interactor, stretch=1)
 
         self._actor = None
